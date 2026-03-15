@@ -92,9 +92,7 @@ export default function PriceResult({
         <div>Tổng tầng: {floors}</div>
 
         <div>Hướng cửa: {mainDirection}</div>
-
-        <div>Hướng ban công: {balconyDirection}</div>
-
+        
         <div>Pháp lý: {legal}</div>
 
       </div>

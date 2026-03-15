@@ -62,21 +62,19 @@ export default function Dashboard() {
   }, [houseType]);
 
   useEffect(() => {
+    if (!area || !houseType) return;
 
-    if (!area) return;
-
-    const limits = getLimits(area);
+    const limits = getLimits(area, houseType);
 
     setBedMax(limits.bed);
     setWcMax(limits.wc);
     setFloorMax(limits.floor);
 
-    // tránh vượt quá max
     if (bedrooms > limits.bed) setBedrooms(limits.bed);
     if (toilets > limits.wc) setToilets(limits.wc);
     if (floors > limits.floor) setFloors(limits.floor);
 
-  }, [area]);
+  }, [area, houseType]);
 
   // ================= PREDICT =================
   const handlePredict = async () => {
@@ -135,16 +133,6 @@ export default function Dashboard() {
       "Đang chờ sổ"
     ],
 
-    "đất dự án": [
-      "Đang chờ sổ",
-      "Hợp đồng mua bán"
-    ],
-
-    "đất nông nghiệp": [
-      "Sổ hồng / Sổ đỏ",
-      "Giấy tay / Vi bằng"
-    ],
-
     "đất thổ cư": [
       "Sổ hồng / Sổ đỏ",
       "Đang chờ sổ",
@@ -164,40 +152,26 @@ export default function Dashboard() {
       "Đang chờ sổ"
     ],
 
-    "nhà phố": [
-      "Sổ hồng / Sổ đỏ",
-      "Đang chờ sổ",
-      "Sổ chung"
-    ]
-
   };
 
   const DIRECTION_ORDER = [
     "Đông",
     "Tây",
     "Nam",
-    "Bắc",
-    "Đông Nam",
-    "Tây Nam",
-    "Đông Bắc",
-    "Tây Bắc"
+    "Bắc"
   ];
 
   // range diện tích theo loại nhà
   const AREA_RANGE = {
-    "chung cư": { min: 25, max: 150 },
-    "nhà hẻm": { min: 30, max: 150 },
-    "nhà phố": { min: 40, max: 250 },
-    "nhà mặt tiền": { min: 50, max: 400 },
-    "biệt thự": { min: 150, max: 1000 },
-    "đất thổ cư": { min: 40, max: 500 },
-    "đất nông nghiệp": { min: 500, max: 3000 }
+    "chung cư": { min: 40, max: 300 },
+    "nhà hẻm": { min: 40, max: 300 },
+    "nhà mặt tiền": { min: 60, max: 600 },
+    "đất thổ cư": { min: 60, max: 1000 },
+    "biệt thự": { min: 100, max: 1000 }
   };
 
   const LAND_TYPES = [
-    "đất thổ cư",
-    "đất nông nghiệp",
-    "đất dự án"
+    "đất thổ cư"
   ];
 
   const isFormValid = () => {
@@ -206,25 +180,108 @@ export default function Dashboard() {
     if (!houseType) return false;
     if (!legalDocs) return false;
 
-    // nếu không phải đất thì bắt buộc có hướng
-    if (!isLand) {
-      if (!doorDirection) return false;
-      if (!balconyDirection) return false;
-    }
+    // ✅ mọi loại nhà, kể cả đất, đều phải có hướng cửa
+    if (!doorDirection) return false;
 
+    // ❌ bỏ hoàn toàn hướng ban công
     return true;
   };
 
   // rule giống python
-  function getLimits(area) {
-    if (area <= 30) return { bed: 1, wc: 1, floor: 0 };
-    if (area <= 50) return { bed: 2, wc: 1, floor: 1 };
-    if (area <= 80) return { bed: 3, wc: 2, floor: 2 };
-    if (area <= 120) return { bed: 4, wc: 3, floor: 3 };
-    if (area <= 200) return { bed: 6, wc: 4, floor: 3 };
-    if (area <= 350) return { bed: 8, wc: 6, floor: 4 };
-    if (area <= 600) return { bed: 12, wc: 8, floor: 5 };
-    return { bed: 20, wc: 10, floor: 5 };
+  function getLimits(area, houseType) {
+
+    if (!houseType) {
+      return { bed: 0, wc: 0, floor: 0 };
+    }
+
+    houseType = houseType.toLowerCase();
+
+    // =====================
+    // ĐẤT THỔ CƯ – KHÔNG PHÒNG
+    // =====================
+    if (houseType === "đất thổ cư") {
+      return { bed: 0, wc: 0, floor: 0 };
+    }
+
+    // =====================
+    // CHUNG CƯ (40 – 300) – KHÔNG LẦU
+    // =====================
+    if (houseType === "chung cư") {
+      if (area <= 80) {
+        return { bed: 1, wc: 1, floor: 0 };
+      }
+      if (area <= 120) {
+        return { bed: 2, wc: 2, floor: 0 };
+      }
+      if (area <= 180) {
+        return { bed: 3, wc: 2, floor: 0 };
+      }
+      if (area <= 240) {
+        return { bed: 4, wc: 3, floor: 0 };
+      }
+      // 240 – 300
+      return { bed: 5, wc: 4, floor: 0 };
+    }
+
+    // =====================
+    // NHÀ HẺM (40 – 300)
+    // =====================
+    if (houseType === "nhà hẻm") {
+      if (area <= 80) {
+        return { bed: 3, wc: 1, floor: 1 };
+      }
+      if (area <= 120) {
+        return { bed: 3, wc: 2, floor: 1 };
+      }
+      if (area <= 180) {
+        return { bed: 4, wc: 3, floor: 2 };
+      }
+      if (area <= 240) {
+        return { bed: 5, wc: 4, floor: 2 };
+      }
+      // 240 – 300
+      return { bed: 6, wc: 5, floor: 3 };
+    }
+
+    // =====================
+    // NHÀ MẶT TIỀN (60 – 600)
+    // =====================
+    if (houseType === "nhà mặt tiền") {
+      if (area <= 100) {
+        return { bed: 3, wc: 2, floor: 1 };
+      }
+      if (area <= 200) {
+        return { bed: 4, wc: 3, floor: 2 };
+      }
+      if (area <= 300) {
+        return { bed: 6, wc: 4, floor: 3 };
+      }
+      if (area <= 450) {
+        return { bed: 8, wc: 5, floor: 4 };
+      }
+      // 450 – 600
+      return { bed: 10, wc: 6, floor: 4 };
+    }
+
+    // =====================
+    // BIỆT THỰ (100 – 1000)
+    // =====================
+    if (houseType === "biệt thự") {
+      if (area <= 300) {
+        return { bed: 4, wc: 3, floor: 2 };
+      }
+      if (area <= 500) {
+        return { bed: 6, wc: 5, floor: 2 };
+      }
+      if (area <= 800) {
+        return { bed: 8, wc: 6, floor: 3 };
+      }
+      // 800 – 1000
+      return { bed: 12, wc: 8, floor: 3 };
+    }
+
+    // fallback an toàn
+    return { bed: 0, wc: 0, floor: 0 };
   }
 
   const isLand = LAND_TYPES.includes(houseType.toLowerCase());
@@ -390,14 +447,12 @@ export default function Dashboard() {
           />
 
           {/* HOUSE DIRECTION */}
-          {!isLand && (
           <div>
             <p className="text-sm text-gray-300 mb-2">
               Hướng cửa chính
             </p>
 
             <div className="grid grid-cols-4 gap-2">
-
               {categories["House Direction"]
                 ?.sort(
                   (a, b) =>
@@ -405,49 +460,15 @@ export default function Dashboard() {
                     DIRECTION_ORDER.indexOf(b)
                 )
                 .map(dir => (
-
                   <SelectionCard
                     key={dir}
                     label={dir || "Không rõ"}
                     selected={doorDirection === dir}
                     onClick={() => setDoorDirection(dir)}
                   />
-
-              ))}
-
+                ))}
             </div>
           </div>
-          )}
-
-          {/* BALCONY */}
-          {!isLand && (
-          <div>
-            <p className="text-sm text-gray-300 mb-2">
-              Hướng ban công
-            </p>
-
-            <div className="grid grid-cols-4 gap-2">
-
-              {categories["Balcony Direction"]
-                ?.sort(
-                  (a, b) =>
-                    DIRECTION_ORDER.indexOf(a) -
-                    DIRECTION_ORDER.indexOf(b)
-                )
-                .map(dir => (
-
-                  <SelectionCard
-                    key={dir}
-                    label={dir || "Không rõ"}
-                    selected={balconyDirection === dir}
-                    onClick={() => setBalconyDirection(dir)}
-                  />
-
-              ))}
-
-            </div>
-          </div>
-          )}
 
           {/* BUTTON */}
           <button

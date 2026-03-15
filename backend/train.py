@@ -11,27 +11,86 @@ from sklearn.ensemble import HistGradientBoostingRegressor
 # =============================
 # LOAD DATA
 # =============================
-df = pd.read_csv("buoc3.csv", encoding="utf-8-sig")
+df = pd.read_csv("buoc6.csv", encoding="utf-8-sig")
 df.columns = df.columns.str.strip()
 
 print("📌 Columns in CSV:", list(df.columns))
 
 # =============================
-# BASE PRICE
+# RENAME COLUMNS (STANDARDIZE)
+# =============================
+df = df.rename(columns={
+    "Location": "location",
+    "Legal Documents": "Legal Status",
+    "Toilets": "WC",
+    "Total Floors": "Floors"
+})
+
+# =============================
+# FIX PRICE OF M2  (TRIỆU / m2)
+# =============================
+if df["Price of m2"].dtype == "object":
+    df["Price of m2"] = (
+        df["Price of m2"]
+        .astype(str)
+        .str.lower()
+        .str.replace("triệu/m²", "", regex=False)
+        .str.replace("triệu/m2", "", regex=False)
+        .str.replace(",", ".", regex=False)
+        .str.strip()
+    )
+    df["Price of m2"] = pd.to_numeric(df["Price of m2"], errors="coerce")
+
+# =============================
+# TOTAL PRICE NUMBER (TRIỆU)
+# =============================
+if "Total Price Number" not in df.columns:
+    if "Price Billion" in df.columns:
+        # TỶ → TRIỆU
+        df["Total Price Number"] = df["Price Billion"] * 1000
+    elif "Total Price" in df.columns:
+        # VND → TRIỆU
+        df["Total Price Number"] = df["Total Price"] / 1_000_000
+    else:
+        raise ValueError("❌ Không tìm thấy cột giá tổng")
+
+# =============================
+# CAST NUMERIC
+# =============================
+numeric_cols = [
+    "Price of m2",
+    "Land Area",
+    "Bedrooms",
+    "WC",
+    "Floors",
+    "Total Price Number"
+]
+
+for col in numeric_cols:
+    if col in df.columns:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
+# DROP ROWS WITH INVALID PRICE / AREA
+df = df.dropna(subset=["Price of m2", "Land Area", "Total Price Number"])
+
+# =============================
+# BASE PRICE (TRIỆU)
 # =============================
 df["BasePrice"] = df["Price of m2"] * df["Land Area"]
 
 # =============================
 # TARGET = log( Total / Base )
 # =============================
-df["TargetCoef"] = np.log1p(df["Total Price Number"] / df["BasePrice"])
+df["TargetCoef"] = np.log1p(
+    df["Total Price Number"] / df["BasePrice"]
+)
 
 # =============================
-# REQUIRED FEATURES (FULL SET)
+# FEATURES
 # =============================
 feature_cols = [
-    "Price of m2",      # ✅ BẮT BUỘC
-    "Land Area",    # ✅ BẮT BUỘC
+    "Price of m2",      # BẮT BUỘC
+    "Land Area",        # BẮT BUỘC
     "Bedrooms",
     "WC",
     "Floors",
@@ -80,7 +139,8 @@ for col in X.columns:
 # SPLIT
 # =============================
 X_train, X_test, y_train, y_test = train_test_split(
-    X, y,
+    X,
+    y,
     test_size=0.2,
     random_state=42
 )
@@ -109,7 +169,7 @@ r2 = r2_score(y_test, pred)
 print("✅ R2 (coef model):", round(r2, 4))
 
 # =============================
-# SAVE
+# SAVE MODEL
 # =============================
 os.makedirs("model", exist_ok=True)
 

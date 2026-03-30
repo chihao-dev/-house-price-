@@ -1,63 +1,48 @@
-import re
+# preprocess.py
 import pandas as pd
+import numpy as np
+import re
 
-# =============================
-# Convert text price -> TRIỆU
-# =============================
-def extract_price(text):
+def convert_price(x):
+    x = str(x).lower().replace(',', '.')
+    if 'tỷ' in x:
+        return float(re.findall(r'\d+\.?\d*', x)[0]) * 1e9
+    elif 'triệu' in x:
+        return float(re.findall(r'\d+\.?\d*', x)[0]) * 1e6
+    return np.nan
 
-    if pd.isna(text):
-        return None
+def convert_area(x):
+    x = str(x).replace(',', '.')
+    match = re.findall(r'\d+\.?\d*', x)
+    return float(match[0]) if match else np.nan
 
-    if isinstance(text, (int, float)):
-        return float(text)
-
-    text = str(text).lower().replace(" ", "").replace(",", ".")
-
-    # dạng: 3.5tỷ
-    if "tỷ" in text:
-        nums = re.findall(r"\d+\.?\d*", text)
-        return float(nums[0]) * 1000 if nums else None
-
-    # dạng: 850triệu
-    if "triệu" in text:
-        nums = re.findall(r"\d+\.?\d*", text)
-        return float(nums[0]) if nums else None
-
-    nums = re.findall(r"\d+\.?\d*", text)
-    return float(nums[0]) if nums else None
-
-
-# =============================
-# Preprocess dataframe
-# =============================
-def preprocess_dataframe(df):
-
-    df = df.copy()
-
-    numeric_cols = [
-        "Land Area",
-        "Bedrooms",
-        "WC",
-        "Floors",
-        "Price of m2",
-        "Total Price Number"
-    ]
-
-    for col in numeric_cols:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-
-    # loại cột chỉ để hiển thị
-    drop_cols = [
-        "Total Price",
-        "Display Price",
-        "Price Billion"
-    ]
-
-    for col in drop_cols:
-        if col in df.columns:
-            df = df.drop(columns=[col])
-
+def preprocess_data(csv_path):
+    df = pd.read_csv(csv_path)
+    
+    # Chuẩn hóa tên cột
+    df.columns = df.columns.str.strip().str.lower()
+    
+    # Chuyển giá và diện tích
+    df['price'] = df['price'].apply(convert_price)
+    df['land area'] = df['land area'].apply(convert_area)
+    
+    # Số phòng ngủ và WC
+    df['bedrooms'] = df['bedrooms'].str.extract(r'(\d+)').astype(float)
+    df['toilets'] = df['toilets'].str.extract(r'(\d+)').astype(float)
+    
+    # Số tầng
+    df['total floors'] = pd.to_numeric(df['total floors'], errors='coerce').fillna(0)
+    
+    # Xử lý missing
     df = df.dropna()
-    return df
+    
+    # Lưu các cột gốc để lấy categories
+    categorical_columns = ['type of house', 'main door direction', 'balcony direction', 'legal documents', 'location']
+    
+    # One-hot encode
+    df_encoded = pd.get_dummies(df, drop_first=True)
+    
+    X = df_encoded.drop('price', axis=1)
+    y = df_encoded['price']
+    
+    return X, y, df, categorical_columns

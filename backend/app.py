@@ -1,168 +1,138 @@
+# app.py
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+import pickle
 import pandas as pd
-import numpy as np
-import joblib
-import os
 
-# =========================
-# APP
-# =========================
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": ["http://localhost:5173"]}})
+CORS(app)  # cho phép frontend gọi từ localhost:3000
 
-# =========================
-# LOAD MODEL
-# =========================
-model = joblib.load("model/coef_model.pkl")
-encoders = joblib.load("model/encoders.pkl")
-feature_cols = joblib.load("model/features.pkl")
+# -------------------------------
+# Load model, feature columns, categories
+# -------------------------------
+with open('rf_model.pkl', 'rb') as f:
+    model = pickle.load(f)
 
-# =========================
-# LOAD PRICE DATASET (SAME AS TRAIN)
-# =========================
-DATA_FILE = "buoc6.csv"
+with open('feature_columns.pkl', 'rb') as f:
+    feature_columns = pickle.load(f)
 
-if not os.path.exists(DATA_FILE):
-    raise FileNotFoundError(f"❌ Không tìm thấy file dữ liệu: {DATA_FILE}")
+with open('categories.pkl', 'rb') as f:
+    categories = pickle.load(f)
 
-price_df = pd.read_csv(DATA_FILE, encoding="utf-8-sig")
-price_df.columns = price_df.columns.str.strip()
+# Load dataset gốc để tính avgPrices
+# Giả sử bạn đã có X_train, y_train pickle
+with open('X_train.pkl', 'rb') as f:
+    X_train = pickle.load(f)
 
-# RENAME cho khớp model
-price_df = price_df.rename(columns={
-    "Location": "location",
-    "Legal Documents": "Legal Status",
-    "Toilets": "WC",
-    "Total Floors": "Floors"
-})
+with open('y_train.pkl', 'rb') as f:
+    y_train = pickle.load(f)
 
-# FIX Price of m2
-if price_df["Price of m2"].dtype == "object":
-    price_df["Price of m2"] = (
-        price_df["Price of m2"]
-        .astype(str)
-        .str.lower()
-        .str.replace("triệu/m²", "", regex=False)
-        .str.replace("triệu/m2", "", regex=False)
-        .str.replace(",", ".", regex=False)
-        .str.strip()
-    )
-    price_df["Price of m2"] = pd.to_numeric(
-        price_df["Price of m2"], errors="coerce"
-    )
-
-price_df["Land Area"] = pd.to_numeric(
-    price_df["Land Area"], errors="coerce"
-)
-
-price_df = price_df.dropna(subset=["Price of m2", "Land Area"])
-
-# =========================
-# LOOKUP PRICE / m2 (MEDIAN)
-# =========================
-def lookup_price_per_m2(location, house_type):
-    df = price_df.copy()
-
-    if location:
-        df = df[df["location"].str.contains(location, case=False, na=False)]
-
-    if house_type:
-        df = df[df["Type of House"] == house_type]
-
-    # fallback theo loại nhà
-    if df.empty and house_type:
-        df = price_df[price_df["Type of House"] == house_type]
-
-    # fallback toàn bộ
-    if df.empty:
-        df = price_df
-
-    return float(df["Price of m2"].median())
-
-# =========================
-# CATEGORIES
-# =========================
-FIXED_DIRECTIONS = ["Đông", "Tây", "Nam", "Bắc"]
-
-@app.route("/categories", methods=["GET"])
+# -------------------------------
+# API trả về categories
+# -------------------------------
+@app.route('/categories', methods=['GET'])
 def get_categories():
-    categories = {}
-
-    for col, encoder in encoders.items():
-        if col in ["House Direction", "Balcony Direction"]:
-            categories[col] = FIXED_DIRECTIONS
-        else:
-            categories[col] = list(encoder.classes_)
-
     return jsonify(categories)
 
-# =========================
-# PREDICT
-# =========================
-@app.route("/predict", methods=["POST"])
+# -------------------------------
+# API predict
+# -------------------------------
+@app.route('/predict', methods=['POST'])
 def predict():
+    data = request.get_json()
+
+    # ---------------------------
+    # 1. Tạo DataFrame demo
+    # ---------------------------
+    demo = pd.DataFrame(0, index=[0], columns=feature_columns)
+
+    # Numeric features
+    mapping = {
+        "land area": data.get("Land Area", 0),
+        "bedrooms": data.get("Bedrooms", 0),
+        "toilets": data.get("WC", 0),
+        "total floors": data.get("Floors", 0)
+    }
+    for k, v in mapping.items():
+        if k in demo.columns:
+            demo.loc[0, k] = v
+
+    # Categorical features
+    cat_mapping = {
+        "type of house": data.get("Type of House", ""),
+        "location": data.get("location") or data.get("District", ""),
+        "main door direction": data.get("House Direction", ""),
+        "balcony direction": data.get("Balcony Direction", ""),
+        "legal documents": data.get("Legal Status", "")
+    }
+    for cat, val in cat_mapping.items():
+        col_name = f"{cat}_{val}"
+        if col_name in demo.columns:
+            demo.loc[0, col_name] = 1
+
+    # ---------------------------
+    # 2. Dự đoán giá
+    # ---------------------------
     try:
-        data = request.json or {}
-
-        if "Land Area" not in data:
-            return jsonify({"error": "Missing Land Area"}), 400
-
-        land_area = float(data["Land Area"])
-        location = data.get("location", "")
-        house_type = data.get("Type of House", "")
-
-        # BASE PRICE (TRIỆU)
-        price_m2 = lookup_price_per_m2(location, house_type)
-        base_price = price_m2 * land_area
-
-        # BUILD INPUT
-        input_data = {}
-        for col in feature_cols:
-            input_data[col] = data.get(col, 0)
-
-        df = pd.DataFrame([input_data])
-
-        # ENCODE CATEGORICAL
-        for col, encoder in encoders.items():
-            if col in df.columns:
-                value = str(df.at[0, col]).strip()
-                if value not in encoder.classes_:
-                    value = encoder.classes_[0]
-                df[col] = encoder.transform([value])
-
-        # CAST NUMERIC
-        for col in ["Bedrooms", "WC", "Floors", "Price of m2", "Land Area"]:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
-
-        df = df[feature_cols]
-
-        # PREDICT
-        coef_log = model.predict(df)[0]
-        coef = np.expm1(coef_log)
-
-        final_price = base_price * coef
-
-        return jsonify({
-            "price_per_m2": round(price_m2 * 1_000_000, 0),
-            "base_price": round(base_price * 1_000_000, 0),
-            "predicted_price": round(final_price * 1_000_000, 0)
-        })
-
+        pred_price = float(model.predict(demo)[0])  # VND nguyên gốc
     except Exception as e:
-        print("❌ Predict error:", e)
         return jsonify({"error": str(e)}), 500
 
-# =========================
-# HOME
-# =========================
-@app.route("/")
-def home():
-    return "House Price AI API Running"
+    # ---------------------------
+    # 3. Xác định phường/quận dự đoán
+    # ---------------------------
+    location_cols = [c for c in demo.columns if c.startswith('location_') and demo.loc[0, c] == 1]
+    if location_cols:
+        predicted_location = location_cols[0].replace("location_", "")
+        district = predicted_location.split(',')[-1].strip()
+    else:
+        predicted_location = "Unknown"
+        district = "Unknown"
 
-# =========================
-# RUN
-# =========================
-if __name__ == "__main__":
+    # ---------------------------
+    # 4. Tính giá trung bình từng phường trong quận
+    # ---------------------------
+    location_cols_same_district = [c for c in X_train.columns if c.startswith('location_') and district in c]
+    avg_prices = {}
+    for col in location_cols_same_district:
+        mask = X_train[col] == 1
+        if mask.sum() > 0:
+            avg_prices[col.replace("location_", "")] = float(y_train[mask].mean())
+
+    # ---------------------------
+    # 5. Tính khu vực cùng tầm giá (±10%)
+    # ---------------------------
+    min_price = pred_price * 0.9
+    max_price = pred_price * 1.1
+
+    mask_similar = (y_train >= min_price) & (y_train <= max_price)
+    X_similar = X_train[mask_similar]
+
+    # Lấy tất cả cột location
+    location_cols_all = [c for c in X_train.columns if c.startswith('location_')]
+
+    # Tổng số nhà từng location, lấy top 8
+    location_suggest = (
+        X_similar[location_cols_all]
+        .sum()
+        .sort_values(ascending=False)
+        .head(8)
+        .to_dict()
+    )
+
+    # Chuyển tên cột thành format "Phường X"
+    location_suggest = {k.replace('location_', ''): int(v) for k,v in location_suggest.items()}
+
+    # ---------------------------
+    # 6. Trả JSON
+    # ---------------------------
+    return jsonify({
+        "predictedPrice": pred_price,
+        "predictedLocation": predicted_location,
+        "avgPrices": avg_prices,
+        "locationSuggest": location_suggest
+    })
+
+
+if __name__ == '__main__':
     app.run(debug=True, port=5000)
